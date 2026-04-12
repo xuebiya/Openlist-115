@@ -1,0 +1,82 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        target: [linux-amd64, linux-arm64, windows-amd64, windows7-amd64, windows7-386]
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+
+      - name: Build Linux amd64/arm64
+        if: matrix.target == 'linux-amd64' || matrix.target == 'linux-arm64'
+        run: |
+          mkdir -p build
+          export CGO_ENABLED=1
+          if [ "${{ matrix.target }}" = "linux-amd64" ]; then
+            export GOOS=linux
+            export GOARCH=amd64
+          else
+            export GOOS=linux
+            export GOARCH=arm64
+          fi
+          go build -o build/openlist-${{ matrix.target }} -ldflags="-w -s" -tags=jsoniter .
+        shell: bash
+
+      - name: Build Windows amd64
+        if: matrix.target == 'windows-amd64'
+        run: |
+          mkdir -p build
+          go build -o build/openlist-${{ matrix.target }}.exe -ldflags="-w -s" -tags=jsoniter .
+        shell: bash
+
+      - name: Build Windows 7
+        if: matrix.target == 'windows7-amd64' || matrix.target == 'windows7-386'
+        run: |
+          mkdir -p build
+          # Get Go version
+          go_version=$(go version | grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' | sed 's/go//')
+          echo "Detected Go version: $go_version"
+
+          # Download patched Go for Win7
+          curl -fsSL --retry 3 -o go-win7.zip "https://github.com/XTLS/go-win7/releases/download/patched-${go_version}/go-for-win7-linux-amd64.zip"
+
+          rm -rf go-win7
+          unzip go-win7.zip -d go-win7
+          rm go-win7.zip
+
+          if [ "${{ matrix.target }}" = "windows7-amd64" ]; then
+            arch="amd64"
+          else
+            arch="386"
+          fi
+
+          echo "Building for windows7-${arch}"
+          export GOOS=windows
+          export GOARCH=${arch}
+          export CGO_ENABLED=1
+          $(pwd)/go-win7/bin/go build -o build/openlist-${{ matrix.target }}.exe -ldflags="-w -s" -tags="jsoniter,sqlite_cgo_compat" .
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-${{ matrix.target }}
+          path: build/openlist-${{ matrix.target }}*
+          retention-days: 1
