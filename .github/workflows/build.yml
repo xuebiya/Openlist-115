@@ -1,75 +1,348 @@
-name: Test Build
+name: Build Release
 
 on:
-  pull_request:
-    branches: ["main"]
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - master
+      - main
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+env:
+  GO_VERSION: '1.25'
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        target:
-          - darwin-amd64
-          - darwin-arm64
-          - windows-amd64
-          - linux-arm64-musl
-          - linux-amd64-musl
-          - windows-arm64
-          - android-arm64
-    name: Build ${{ matrix.target }}
-    runs-on: ubuntu-latest
+  # 构建 Windows amd64
+  build-windows-amd64:
+    runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - uses: benjlevesque/short-sha@v3.0
-        id: short-sha
-
-      - name: Setup Go
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.0"
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: Setup web
-        run: bash build.sh dev web
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
+      - name: Get dependencies
+        run: go mod download
 
-      - name: Build
-        uses: OpenListTeam/cgo-actions@v1.2.2
-        with:
-          targets: ${{ matrix.target }}
-          flags: ${{ contains(matrix.target, '-musl') && '-ldflags=-linkmode external -extldflags ''-static -fpic''' || '-ldflags=' }}
-          static-link-for-musl: true
-          musl-target-format: $os-$musl-$arch
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          out-dir: build
-          x-flags: |
-            github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at
-            github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@openlist.team>
-            github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
-            github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
-            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
-          output: openlist$ext
-
-      - name: Verify musl binary is static
-        if: contains(matrix.target, '-musl')
+      - name: Build Windows amd64
         run: |
-          set -e
-          if readelf -l build/openlist | grep -q "Requesting program interpreter"; then
-            echo "Dynamic binary detected: build/openlist"
-            readelf -l build/openlist | grep "Requesting program interpreter" || true
-            exit 1
-          fi
+          $version = if ($env:GITHUB_REF -match 'v[\d]+\.[\d]+\.[\d]+') { $matches[0] } else { "v0.0.0" }
+          Write-Host "Building version: $version"
+          go build -ldflags="-w -s -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$version' -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=local'" -tags=jsoniter -o openlist-windows-amd64.exe .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openlist_${{ steps.short-sha.outputs.sha }}_${{ matrix.target }}
-          path: build/*
+          name: openlist-windows-amd64
+          path: openlist-windows-amd64.exe
+          retention-days: 1
+
+  # 构建 Windows arm64
+  build-windows-arm64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Build Windows arm64
+        run: |
+          $version = if ($env:GITHUB_REF -match 'v[\d]+\.[\d]+\.[\d]+') { $matches[0] } else { "v0.0.0" }
+          Write-Host "Building version: $version"
+          go build -ldflags="-w -s -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$version' -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=local'" -tags=jsoniter -o openlist-windows-arm64.exe .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-windows-arm64
+          path: openlist-windows-arm64.exe
+          retention-days: 1
+
+  # 构建 Windows 7 (amd64 + 386)
+  build-windows7:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download patched Go for Win7
+        run: |
+          go_version=$(go version | grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' | sed 's/go//')
+          echo "Detected Go version: $go_version"
+          curl -fsSL --retry 3 -o go-win7.zip "https://github.com/XTLS/go-win7/releases/download/patched-${go_version}/go-for-win7-linux-amd64.zip"
+          rm -rf go-win7
+          unzip -q go-win7.zip -d go-win7
+          rm go-win7.zip
+
+      - name: Build Windows 7 amd64
+        run: |
+          export GOOS=windows
+          export GOARCH=amd64
+          export CGO_ENABLED=1
+          $(pwd)/go-win7/bin/go build -ldflags="-w -s -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION}' -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=local'" -tags="jsoniter,sqlite_cgo_compat" -o openlist-windows7-amd64.exe .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-windows7-amd64
+          path: openlist-windows7-amd64.exe
+          retention-days: 1
+
+      - name: Build Windows 7 386
+        run: |
+          export GOOS=windows
+          export GOARCH=386
+          export CGO_ENABLED=1
+          $(pwd)/go-win7/bin/go build -ldflags="-w -s -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION}' -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=local'" -tags="jsoniter,sqlite_cgo_compat" -o openlist-windows7-386.exe .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-windows7-386
+          path: openlist-windows7-386.exe
+          retention-days: 1
+
+  # 构建 Linux amd64 (静态编译)
+  build-linux-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install musl tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Build Linux amd64 (musl)
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          if ! [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            VERSION="v0.0.0"
+          fi
+          echo "Building version: $VERSION"
+          CGO_ENABLED=1 CC=musl-gcc go build -ldflags="-w -s -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION}' -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=local'" -tags=jsoniter -o openlist-linux-amd64 .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-linux-amd64
+          path: openlist-linux-amd64
+          retention-days: 1
+
+  # 构建 Linux 386
+  build-linux-386:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Build Linux 386
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          if ! [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            VERSION="v0.0.0"
+          fi
+          echo "Building version: $VERSION"
+          CGO_ENABLED=1 CC=gcc go build -ldflags="-w -s -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION}' -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=local'" -tags=jsoniter -o openlist-linux-386 .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-linux-386
+          path: openlist-linux-386
+          retention-days: 1
+
+  # 构建 macOS amd64
+  build-darwin-amd64:
+    runs-on: macos-13
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Build macOS amd64
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          if ! [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            VERSION="v0.0.0"
+          fi
+          echo "Building version: $VERSION"
+          CGO_ENABLED=1 go build -ldflags="-w -s -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION}' -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=local'" -tags=jsoniter -o openlist-darwin-amd64 .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-darwin-amd64
+          path: openlist-darwin-amd64
+          retention-days: 1
+
+  # 构建 macOS arm64 (Apple Silicon)
+  build-darwin-arm64:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Build macOS arm64
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          if ! [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            VERSION="v0.0.0"
+          fi
+          echo "Building version: $VERSION"
+          CGO_ENABLED=1 go build -ldflags="-w -s -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=${VERSION}' -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=local'" -tags=jsoniter -o openlist-darwin-arm64 .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-darwin-arm64
+          path: openlist-darwin-arm64
+          retention-days: 1
+
+  # 创建发布
+  release:
+    needs: [build-windows-amd64, build-windows-arm64, build-windows7, build-linux-amd64, build-linux-386, build-darwin-amd64, build-darwin-arm64]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package Windows amd64
+        run: |
+          cd artifacts
+          mkdir release
+          cp openlist-windows-amd64/openlist-windows-amd64.exe release/openlist.exe
+          cd release
+          zip openlist-windows-amd64.zip openlist.exe
+
+      - name: Package Windows arm64
+        run: |
+          cd artifacts
+          cp openlist-windows-arm64/openlist-windows-arm64.exe release/
+          cd release
+          zip openlist-windows-arm64.zip openlist-windows-arm64.exe
+
+      - name: Package Windows 7 amd64
+        run: |
+          cd artifacts
+          cp openlist-windows7-amd64/openlist-windows7-amd64.exe release/
+          cd release
+          zip openlist-windows7-amd64.zip openlist-windows7-amd64.exe
+
+      - name: Package Windows 7 386
+        run: |
+          cd artifacts
+          cp openlist-windows7-386/openlist-windows7-386.exe release/
+          cd release
+          zip openlist-windows7-386.zip openlist-windows7-386.exe
+
+      - name: Package Linux amd64
+        run: |
+          cd artifacts
+          cd openlist-linux-amd64
+          tar -czvf ../release/openlist-linux-amd64.tar.gz openlist-linux-amd64
+
+      - name: Package Linux 386
+        run: |
+          cd artifacts
+          cd openlist-linux-386
+          tar -czvf ../release/openlist-linux-386.tar.gz openlist-linux-386
+
+      - name: Package macOS amd64
+        run: |
+          cd artifacts
+          cd openlist-darwin-amd64
+          tar -czvf ../release/openlist-darwin-amd64.tar.gz openlist-darwin-amd64
+
+      - name: Package macOS arm64
+        run: |
+          cd artifacts
+          cd openlist-darwin-arm64
+          tar -czvf ../release/openlist-darwin-arm64.tar.gz openlist-darwin-arm64
+
+      - name: Generate checksums
+        run: |
+          cd artifacts/release
+          md5sum * > md5.txt
+          sha256sum * > sha256.txt
+          cat md5.txt
+          echo "---"
+          cat sha256.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/release/*.zip
+            artifacts/release/*.tar.gz
+            artifacts/release/md5.txt
+            artifacts/release/sha256.txt
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
