@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.23'
 
 jobs:
   # 构建 Windows amd64
@@ -197,7 +197,7 @@ jobs:
 
   # 构建 macOS amd64
   build-darwin-amd64:
-    runs-on: macos-13
+    runs-on: macos-14
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
