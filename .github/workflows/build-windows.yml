@@ -1,0 +1,110 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-amd64:
+    name: Build Windows amd64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+
+      - name: Build
+        run: |
+          mkdir -p build
+          go build -o build/openlist-windows-amd64.exe -ldflags="-w -s" -tags=jsoniter .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-windows-amd64
+          path: build/openlist-windows-amd64.exe
+          retention-days: 1
+
+  build-windows7:
+    name: Build Windows 7
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+
+      - name: Download patched Go
+        run: |
+          go_version=$(go version | grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' | sed 's/go//')
+          echo "Detected Go version: $go_version"
+          curl -fsSL --retry 3 -o go-win7.zip "https://github.com/XTLS/go-win7/releases/download/patched-${go_version}/go-for-win7-linux-amd64.zip"
+          rm -rf go-win7
+          unzip -q go-win7.zip -d go-win7
+          rm go-win7.zip
+
+      - name: Build Windows 7 amd64
+        run: |
+          mkdir -p build
+          export GOOS=windows
+          export GOARCH=amd64
+          export CGO_ENABLED=1
+          $(pwd)/go-win7/bin/go build -o build/openlist-windows7-amd64.exe -ldflags="-w -s" -tags="jsoniter,sqlite_cgo_compat" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-windows7-amd64
+          path: build/openlist-windows7-amd64.exe
+          retention-days: 1
+
+  build-windows7-386:
+    name: Build Windows 7 386
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+
+      - name: Download patched Go
+        run: |
+          go_version=$(go version | grep -o 'go[0-9]\+\.[0-9]\+\.[0-9]\+' | sed 's/go//')
+          echo "Detected Go version: $go_version"
+          curl -fsSL --retry 3 -o go-win7.zip "https://github.com/XTLS/go-win7/releases/download/patched-${go_version}/go-for-win7-linux-amd64.zip"
+          rm -rf go-win7
+          unzip -q go-win7.zip -d go-win7
+          rm go-win7.zip
+
+      - name: Build Windows 7 386
+        run: |
+          mkdir -p build
+          export GOOS=windows
+          export GOARCH=386
+          export CGO_ENABLED=1
+          $(pwd)/go-win7/bin/go build -o build/openlist-windows7-386.exe -ldflags="-w -s" -tags="jsoniter,sqlite_cgo_compat" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openlist-windows7-386
+          path: build/openlist-windows7-386.exe
+          retention-days: 1
